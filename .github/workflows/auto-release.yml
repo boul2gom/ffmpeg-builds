@@ -168,9 +168,9 @@ jobs:
         uses: actions/cache@v5.0.3
         with:
           path: vcpkg/downloads
-          key: ${{ runner.os }}-vcpkg-downloads-${{ hashFiles('self/vcpkg.json') }}
+          key: ${{ runner.os }}-${{ matrix.target-os }}-${{ matrix.target-arch }}-vcpkg-downloads-${{ hashFiles('self/vcpkg.json') }}
           restore-keys: |
-            ${{ runner.os }}-vcpkg-downloads-
+            ${{ runner.os }}-${{ matrix.target-os }}-${{ matrix.target-arch }}-vcpkg-downloads-
 
       - name: 🛠️ Bootstrap vcpkg
         shell: bash
