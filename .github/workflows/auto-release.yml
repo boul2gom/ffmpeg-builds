@@ -1,0 +1,252 @@
+name: Github CI - Automatic weekly release
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Force the release even if no updates are found'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  check_updates:
+    name: ✅ Check update commits
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      has_updates: ${{ steps.check_version.outputs.has_updates }}
+      version: ${{ steps.check_version.outputs.version }}
+
+    steps:
+      - name: 📁 Check out the repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 100
+
+      - name: 🔍 Check for FFmpeg version updates
+        id: check_version
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const vcpkg_response = await github.rest.repos.getContent({
+                owner: 'microsoft',
+                repo: 'vcpkg',
+                path: 'ports/ffmpeg/vcpkg.json',
+                ref: 'master'
+              });
+              
+              const vcpkg_content = Buffer.from(vcpkg_response.data.content, 'base64').toString();
+              const vcpkg_json = JSON.parse(vcpkg_content);
+              const vcpkg_version = vcpkg_json.version;
+              console.log(`📦 Latest vcpkg FFmpeg version: ${vcpkg_version}`);
+              
+              // 2. Get the latest release from THIS repo
+              let latest_release_version = "0.0.0";
+              try {
+                const releases = await github.rest.repos.getLatestRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo
+                });
+                latest_release_version = releases.data.tag_name;
+                console.log(`🏷️ Latest repo release: ${latest_release_version}`);
+              } catch (e) {
+                console.log("No releases found, assuming 0.0.0");
+              }
+              
+              // 3. Compare
+              const has_updates = (vcpkg_version !== latest_release_version) || ("${{ inputs.force_release }}" === "true");
+              
+              if ("${{ inputs.force_release }}" === "true") {
+                 console.log("Force release enabled.");
+              }
+              
+              console.log(`🚀 Has updates? ${has_updates}`);
+              
+              core.setOutput("version", vcpkg_version);
+              core.setOutput("has_updates", has_updates.toString());
+              
+            } catch (error) {
+              core.setFailed(`Failed to check versions: ${error.message}`);
+            }
+
+  # Build FFmpeg for all supported platforms
+  pack_binaries:
+    needs: check_updates
+    if: ${{ needs.check_updates.outputs.has_updates == 'true' }}
+    name: 📦 Build ${{ matrix.target-os }}-${{ matrix.target-arch }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        target-os: [windows, linux, osx, android]
+        target-arch: [arm, arm64, x86, x64]
+        include:
+          - target-os: windows
+            os: windows-latest
+          - target-os: linux
+            os: ubuntu-latest
+          - target-os: osx
+            os: macos-latest
+          - target-os: android
+            os: ubuntu-latest
+        exclude:
+          # Windows arm is obsolete
+          - target-os: windows
+            target-arch: arm
+          # Linux arm is obsolete
+          - target-os: linux
+            target-arch: arm
+          # macOS arm does not exist
+          - target-os: osx
+            target-arch: arm
+          # macOS x86 is obsolete
+          - target-os: osx
+            target-arch: x86
+
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      actions: write
+
+    env:
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+    steps:
+      - name: Export GitHub Actions Cache Environment Variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: 📁 Checkout self
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: self/
+
+      - name: 📁 Checkout vcpkg
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: microsoft/vcpkg
+          ref: master
+          path: vcpkg/
+
+      - name: 🛠️ Bootstrap vcpkg
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            ./vcpkg/bootstrap-vcpkg.bat
+          else
+            ./vcpkg/bootstrap-vcpkg.sh
+          fi
+
+      - name: 📌 Install dependencies
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            ./self/install-deps.ps1
+          else
+            ./self/install-deps.sh
+          fi
+
+      - name: 🏗️ Build FFmpeg
+        shell: bash
+        run: |
+          ./vcpkg/vcpkg install \
+            --recurse \
+            --triplet ${{ matrix.target-arch }}-${{ matrix.target-os }} \
+            --x-manifest-root self/
+
+      - name: 📤 Upload build logs
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: failure()
+        with:
+          name: logs-${{ matrix.target-os }}-${{ matrix.target-arch }}
+          path: vcpkg/buildtrees/**/*.log
+          if-no-files-found: ignore
+
+      - name: 📤 Upload build output
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ffmpeg-${{ matrix.target-os }}-${{ matrix.target-arch }}
+          path: self/vcpkg_installed/${{ matrix.target-arch }}-${{ matrix.target-os }}/tools/ffmpeg/
+          if-no-files-found: error
+
+  release_binaries:
+    name: 🚀 Create Release & Upload
+    needs: [check_updates, pack_binaries]
+    if: ${{ needs.check_updates.outputs.has_updates == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: 📅 Get current date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+
+      - name: 📥 Download all build artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          path: artifacts
+
+      - name: 📦 Archive artifacts
+        run: |
+          mkdir release_assets
+          # Iterate over all directories in artifacts/
+          for dir in artifacts/ffmpeg-*; do
+            if [ -d "$dir" ]; then
+              dirname=$(basename "$dir")
+              echo "Packaging $dirname..."
+              
+              # Set executable permissions for non-Windows
+              if [[ "$dirname" != *"windows"* ]]; then
+                 chmod +x "$dir/ffmpeg" || true
+                 chmod +x "$dir/ffplay" || true
+                 chmod +x "$dir/ffprobe" || true
+              fi
+              
+              # Zip the CONTENTS of the directory
+              pushd "$dir"
+              zip -r "../../release_assets/$dirname.zip" .
+              popd
+            fi
+          done
+          ls -l release_assets/
+          
+          echo "🧮 Calculating Checksums..."
+          pushd release_assets
+          sha256sum *.zip > checksums.sha256
+          cat checksums.sha256
+          popd
+
+      - name: 🚀 Create Release & Upload Assets
+        uses: softprops/action-gh-release@v2.5.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.check_updates.outputs.version }}
+          name: 🔖 ${{ needs.check_updates.outputs.version }}
+          draft: false
+          prerelease: false
+          files: release_assets/*
+          fail_on_unmatched_files: true
+          body: |
+            ## 🚀 FFmpeg ${{ needs.check_updates.outputs.version }}
+            
+            Automated build triggered by update in `vcpkg`.
+            Built on ${{ env.date }}
+            
+            ### 📦 Artifacts & Checksums
+            ```text
+            $(cat release_assets/checksums.sha256)
+            ```
