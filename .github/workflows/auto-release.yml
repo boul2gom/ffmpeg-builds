@@ -30,7 +30,7 @@ jobs:
       - name: 📁 Check out the repository
         uses: actions/checkout@v6.0.2
         with:
-          fetch-depth: 100
+          fetch-depth: 20
 
       - name: 🔍 Check for ffmpeg version updates
         id: check_version
@@ -132,7 +132,7 @@ jobs:
           - target-os: osx
             os: macos-latest
         exclude:
-          # macOS x86 est obsolète
+          # macOS x86 is deprecated
           - target-os: osx
             target-arch: x86
 
@@ -143,7 +143,8 @@ jobs:
       packages: write
 
     env:
-      VCPKG_BINARY_SOURCES: "clear;nuget,GitHub,readwrite"
+      VCPKG_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/vcpkg_cache,readwrite'
 
     steps:
       - name: ⚙️ Export GitHub Actions Cache environment variables
@@ -164,6 +165,7 @@ jobs:
           repository: microsoft/vcpkg
           ref: master
           path: vcpkg/
+          fetch-depth: 1
 
       - name: 🗃️ Cache vcpkg executable
         uses: actions/cache@v5.0.3
@@ -171,7 +173,7 @@ jobs:
           path: |
             vcpkg/vcpkg
             vcpkg/vcpkg.exe
-          key: ${{ runner.os }}-vcpkg-exe-${{ hashFiles('vcpkg/.git/HEAD') }}
+          key: ${{ matrix.target-os }}-vcpkg-exe-${{ hashFiles('vcpkg/.git/HEAD') }}
 
       - name: 🗃️ Cache vcpkg downloads
         uses: actions/cache@v5.0.3
@@ -181,15 +183,17 @@ jobs:
           restore-keys: |
             ${{ matrix.target-os }}-${{ matrix.target-arch }}-vcpkg-downloads-
 
-      - name: 🔧 Configure NuGet credentials
+      - name: 🗃️ Cache vcpkg binary
+        uses: actions/cache@v5.0.3
+        with:
+          path: ${{ env.VCPKG_BINARY_CACHE }}
+          key: ${{ matrix.target-os }}-${{ matrix.target-arch }}-vcpkg-binary-${{ hashFiles('self/vcpkg.json') }}
+          restore-keys: |
+            ${{ matrix.target-os }}-${{ matrix.target-arch }}-vcpkg-binary-
+
+      - name: 📁 Create cache directory
         shell: bash
-        run: |
-          dotnet nuget add source \
-            "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
-            --name "GitHub" \
-            --username "${{ github.actor }}" \
-            --password "${{ secrets.GITHUB_TOKEN }}" \
-            --store-password-in-clear-text
+        run: mkdir -p ${{ env.VCPKG_BINARY_CACHE }}
 
       - name: 🛠️ Bootstrap vcpkg
         shell: bash
@@ -214,8 +218,25 @@ jobs:
         run: |
           ./vcpkg/vcpkg install \
             --recurse \
+            --overlay-triplets=./self/triplets \
             --triplet ${{ matrix.target-arch }}-${{ matrix.target-os }} \
             --x-manifest-root self/
+
+      - name: 📦 Export to NuGet
+        if: runner.os == 'Windows'
+        run: |
+          ./vcpkg/vcpkg export ffmpeg --nuget --nuget-id=MyBuild.FFmpeg --nuget-version=${{ needs.check_updates.outputs.version }} --output=ffmpeg-nuget
+
+      - name: 🚀 Publish to GitHub Packages
+        if: runner.os == 'Windows'
+        run: |
+          dotnet nuget add source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --name "GitHubRepo" \
+            --username "${{ github.actor }}" \
+            --password "${{ secrets.GITHUB_TOKEN }}" \
+            --store-password-in-clear-text
+
+          dotnet nuget push "*.nupkg" --source "GitHubRepo" --api-key github --skip-duplicate
 
       - name: 📤 Upload build logs
         uses: actions/upload-artifact@v6.0.0
