@@ -281,20 +281,22 @@ jobs:
         run: |
           $sourceUrl = "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
           $sourceName = "GitHubRepo"
-          
-          dotnet nuget remove source $sourceName -ErrorAction SilentlyContinue
-          
+
+          # Remove source if it already exists, ignoring errors the PowerShell way
+          dotnet nuget remove source $sourceName 2>$null
+
           dotnet nuget add source $sourceUrl `
             --name $sourceName `
             --username "${{ github.actor }}" `
             --password "${{ secrets.GITHUB_TOKEN }}" `
             --store-password-in-clear-text
 
-          $nupkgFile = Get-ChildItem -Path . -Filter "*.nupkg" | Select-Object -First 1
-          
+          # Search in vcpkg/ where the export actually puts the .nupkg
+          $nupkgFile = Get-ChildItem -Path vcpkg/ -Filter "*.nupkg" | Select-Object -First 1
+
           if ($nupkgFile) {
               Write-Host "Found package: $($nupkgFile.FullName)"
-              dotnet nuget push "$($nupkgFile.FullName)" --source $sourceName --api-key github --skip-duplicate
+              dotnet nuget push "$($nupkgFile.FullName)" --source $sourceName --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
           } else {
               Write-Error "No .nupkg file found to publish!"
               exit 1
