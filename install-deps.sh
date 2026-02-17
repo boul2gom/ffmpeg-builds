@@ -14,10 +14,7 @@ if [ "$(uname)" == "Darwin" ]; then
   brew list nasm &>/dev/null || brew install nasm
 # Linux
 else
-  # Allow :i386 architecture for 32-bit cross-compilation support
   sudo dpkg --add-architecture i386
-
-  # Update package lists
   sudo apt update
 
   # Cross-compilation support
