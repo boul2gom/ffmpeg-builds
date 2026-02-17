@@ -222,6 +222,13 @@ jobs:
             --triplet ${{ matrix.target-arch }}-${{ matrix.target-os }} \
             --x-manifest-root self/
 
+      - name: 📁 Populate vcpkg classic mode paths
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p vcpkg/installed
+          cp -r self/vcpkg_installed/* vcpkg/installed/
+
       - name: 📦 Export to NuGet
         if: runner.os == 'Windows'
         run: |
@@ -256,7 +263,9 @@ jobs:
         if: failure()
         with:
           name: logs-${{ matrix.target-os }}-${{ matrix.target-arch }}
-          path: vcpkg/buildtrees/**/*.log
+          path: |
+            vcpkg/buildtrees/**/*.log
+            !vcpkg/buildtrees/**/src/**
           if-no-files-found: ignore
 
       - name: 📤 Upload build output
