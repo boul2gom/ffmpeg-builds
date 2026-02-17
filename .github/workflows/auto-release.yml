@@ -10,6 +10,16 @@ on:
         required: false
         type: boolean
         default: false
+      dry_run:
+        description: 'Dry run (do not publish release)'
+        required: false
+        type: boolean
+        default: false
+      skip_nuget:
+        description: 'Skip NuGet publish'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -198,20 +208,61 @@ jobs:
       - name: 🛠️ Bootstrap vcpkg
         shell: bash
         run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
+          if [ "${{ matrix.target-os }}" == "windows" ]; then
             ./vcpkg/bootstrap-vcpkg.bat
           else
             ./vcpkg/bootstrap-vcpkg.sh
           fi
 
+      - name: 🗃️ Cache homebrew downloads
+        if: matrix.target-os == 'osx'
+        uses: actions/cache@v5.0.3
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: ${{ matrix.target-os }}-brew-${{ hashFiles('self/install-deps.sh') }}
+          restore-keys: |
+            ${{ matrix.target-os }}-brew-
+
+      - name: 📥 Restore homebrew downloads
+        if: matrix.target-os == 'osx'
+        shell: bash
+        run: |
+          mkdir -p ~/Library/Caches/Homebrew
+          # Start refreshing the cache in the background
+          brew update &
+
+      - name: 🗃️ Cache apt archives
+        if: matrix.target-os == 'linux'
+        uses: actions/cache@v5.0.3
+        with:
+          path: apt-cache
+          key: ${{ matrix.target-os }}-apt-${{ hashFiles('self/install-deps.sh') }}
+          restore-keys: |
+            ${{ matrix.target-os }}-apt-
+
+      - name: 📥 Restore apt archives
+        if: matrix.target-os == 'linux'
+        shell: bash
+        run: |
+          mkdir -p apt-cache
+          sudo mkdir -p /var/cache/apt/archives
+          sudo cp -r apt-cache/* /var/cache/apt/archives/ || true
+
       - name: 📌 Install dependencies
         shell: bash
         run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
+          if [ "${{ matrix.target-os }}" == "windows" ]; then
             ./self/install-deps.ps1
           else
             ./self/install-deps.sh
           fi
+
+      - name: 📤 Save apt archives
+        if: matrix.target-os == 'linux'
+        shell: bash
+        run: |
+          mkdir -p apt-cache
+          sudo cp -r /var/cache/apt/archives/*.deb apt-cache/ || true
 
       - name: 🏗️ Build ffmpeg
         shell: bash
@@ -222,20 +273,13 @@ jobs:
             --triplet ${{ matrix.target-arch }}-${{ matrix.target-os }} \
             --x-manifest-root self/
 
-      - name: 📁 Populate vcpkg classic mode paths
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          mkdir -p vcpkg/installed
-          cp -r self/vcpkg_installed/* vcpkg/installed/
-
       - name: 📦 Export to NuGet
-        if: runner.os == 'Windows'
+        if: matrix.target-os == 'windows' && inputs.skip_nuget != true
         run: |
-          ./vcpkg/vcpkg export ffmpeg --nuget --nuget-id=boul2gom.FFmpeg --nuget-version=${{ needs.check_updates.outputs.version }} --output=ffmpeg-nuget
+          ./vcpkg/vcpkg export ffmpeg --nuget --nuget-id=boul2gom.FFmpeg --nuget-version=${{ needs.check_updates.outputs.version }} --output=ffmpeg-nuget --x-install-root=self/vcpkg_installed --overlay-triplets=./self/triplets --triplet ${{ matrix.target-arch }}-${{ matrix.target-os }}
 
       - name: 🚀 Publish to GitHub Packages
-        if: runner.os == 'Windows'
+        if: matrix.target-os == 'windows' && inputs.skip_nuget != true
         run: |
           $sourceUrl = "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
           $sourceName = "GitHubRepo"
@@ -261,6 +305,7 @@ jobs:
       - name: 📤 Upload build logs
         uses: actions/upload-artifact@v6.0.0
         if: failure()
+        continue-on-error: true
         with:
           name: logs-${{ matrix.target-os }}-${{ matrix.target-arch }}
           path: |
@@ -278,7 +323,7 @@ jobs:
   release_binaries:
     name: 🚀 Create Release & Upload
     needs: [check_updates, pack_binaries]
-    if: ${{ needs.check_updates.outputs.has_updates == 'true' }}
+    if: needs.check_updates.outputs.has_updates == 'true' && inputs.dry_run != true
     runs-on: ubuntu-latest
     permissions:
       contents: write
