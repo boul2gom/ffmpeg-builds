@@ -181,7 +181,7 @@ jobs:
           path: vcpkg/
 
       - name: ⚡ Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.3
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: ⚙️ Export sccache environment variables
         uses: actions/github-script@v8.0.0
