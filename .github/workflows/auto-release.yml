@@ -52,13 +52,15 @@ jobs:
               
               // 2. Get the latest release from THIS repo
               let latest_release_version = "0.0.0";
+              let latest_release_date = null;
               try {
                 const releases = await github.rest.repos.getLatestRelease({
                   owner: context.repo.owner,
                   repo: context.repo.repo
                 });
                 latest_release_version = releases.data.tag_name;
-                console.log(`🏷️ Latest repo release: ${latest_release_version}`);
+                latest_release_date = releases.data.published_at;
+                console.log(`🏷️ Latest repo release: ${latest_release_version} (${latest_release_date})`);
               } catch (e) {
                 console.log("⚠️ No releases found, assuming 0.0.0");
               }
@@ -74,24 +76,38 @@ jobs:
               
               // 4. Fetch Changelog
               let changelog = "";
-              try {
-                const commits = await github.rest.repos.listCommits({
-                  owner: 'microsoft',
-                  repo: 'vcpkg',
-                  path: 'ports/ffmpeg',
-                  per_page: 5
-                });
-                
-                changelog = "### 📜 Vcpkg Changes\n";
-                for (const commit of commits.data) {
-                  const message = commit.commit.message.split('\n')[0];
-                  const author = commit.commit.author.name;
-                  const date = new Date(commit.commit.author.date).toISOString().split('T')[0];
-                  changelog += `- ${date}: ${message} (${author})\n`;
+              if (latest_release_version === "0.0.0" || !latest_release_date) {
+                console.log("⚠️ First release or no previous release found. Skipping detailed changelog.");
+                changelog = "Initial release or manual build.";
+              } else {
+                try {
+                  console.log(`🔍 Fetching commits since ${latest_release_date}...`);
+                  const commits = await github.rest.repos.listCommits({
+                    owner: 'microsoft',
+                    repo: 'vcpkg',
+                    path: 'ports/ffmpeg',
+                    since: latest_release_date
+                  });
+                  
+                  changelog = "### 📜 Vcpkg Changes\n";
+                  // Limit to last 20 commits to avoid huge comments
+                  const commit_list = commits.data.slice(0, 20);
+                  
+                  if (commit_list.length === 0) {
+                     changelog += "No changes found in vcpkg ports/ffmpeg since last release.\n";
+                  } else {
+                      for (const commit of commit_list) {
+                        const message = commit.commit.message.split('\n')[0];
+                        const author = commit.commit.author.name;
+                        const date = new Date(commit.commit.author.date).toISOString().split('T')[0];
+                        changelog += `- ${date}: ${message} (${author})\n`;
+                      }
+                  }
+                  console.log("✅ Fetched changelog");
+                } catch (e) {
+                  console.log(`⚠️ Failed to fetch changelog: ${e.message}`);
+                  changelog = "Failed to fetch changelog.";
                 }
-                console.log("✅ Fetched changelog");
-              } catch (e) {
-                console.log(`⚠️ Failed to fetch changelog: ${e.message}`);
               }
 
               core.setOutput("version", vcpkg_version);
@@ -164,6 +180,25 @@ jobs:
           ref: master
           path: vcpkg/
 
+      - name: ⚡ Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.3
+
+      - name: ⚙️ Export sccache environment variables
+        uses: actions/github-script@v8.0.0
+        with:
+          script: |
+            core.exportVariable('SCCACHE_GHA_ENABLED', 'true');
+            core.exportVariable('CMAKE_C_COMPILER_LAUNCHER', 'sccache');
+            core.exportVariable('CMAKE_CXX_COMPILER_LAUNCHER', 'sccache');
+
+      - name: 🗃️ Cache vcpkg executable
+        uses: actions/cache@v5.0.3
+        with:
+          path: |
+            vcpkg/vcpkg
+            vcpkg/vcpkg.exe
+          key: ${{ runner.os }}-vcpkg-exe-${{ hashFiles('vcpkg/.git/HEAD') }}
+
       - name: 🗃️ Cache vcpkg downloads
         uses: actions/cache@v5.0.3
         with:
@@ -197,6 +232,9 @@ jobs:
             --recurse \
             --triplet ${{ matrix.target-arch }}-${{ matrix.target-os }} \
             --x-manifest-root self/
+
+      - name: 📊 Check sccache stats
+        run: sccache --show-stats
 
       - name: 📤 Upload build logs
         uses: actions/upload-artifact@v6.0.0
@@ -243,8 +281,6 @@ jobs:
               # Set executable permissions for non-Windows
               if [[ "$dirname" != *"windows"* ]]; then
                  chmod +x "$dir/ffmpeg" || true
-                 chmod +x "$dir/ffplay" || true
-                 chmod +x "$dir/ffprobe" || true
               fi
               
               # Zip the CONTENTS of the directory
@@ -256,10 +292,15 @@ jobs:
           ls -l release_assets/
           
           echo "🧮 Calculating Checksums..."
+          # Create checksums OUTSIDE release_assets so it's not uploaded as an asset
           pushd release_assets
-          sha256sum *.zip > checksums.sha256
-          cat checksums.sha256
+          sha256sum *.zip > ../checksums.sha256
           popd
+          
+          # Read checksums into environment variable
+          echo "CHECKSUMS<<EOF" >> $GITHUB_ENV
+          cat checksums.sha256 >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: 🚀 Create Release & Upload Assets
         uses: softprops/action-gh-release@v2.5.0
@@ -281,5 +322,5 @@ jobs:
             
             ### 📦 Artifacts & Checksums
             ```text
-            $(cat release_assets/checksums.sha256)
+            ${{ env.CHECKSUMS }}
             ```

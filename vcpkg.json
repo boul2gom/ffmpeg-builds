@@ -1,20 +1,13 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
-  "name": "ffmpegbin",
+  "name": "ffmpeg-builds",
   "dependencies": [
     {
       "name": "ffmpeg",
       "default-features": false,
       "features": [
         "ffmpeg",
-        {
-          "name": "ffplay",
-          "platform": "!android"
-        },
-        {
-          "name": "ffprobe",
-          "platform": "!android"
-        },
+
         "nonfree",
         {
           "name": "aom",

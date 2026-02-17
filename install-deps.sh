@@ -4,14 +4,14 @@
 if [ "$(uname)" == "Darwin" ]; then
   brew update
 
-  brew install autoconf
-  brew install autoconf-archive
-  brew install automake
-  brew install libtool
-  brew install libx11
-  brew install libxft
-  brew install libxext
-  brew install nasm
+  brew list autoconf &>/dev/null || brew install autoconf
+  brew list autoconf-archive &>/dev/null || brew install autoconf-archive
+  brew list automake &>/dev/null || brew install automake
+  brew list libtool &>/dev/null || brew install libtool
+  brew list libx11 &>/dev/null || brew install libx11
+  brew list libxft &>/dev/null || brew install libxft
+  brew list libxext &>/dev/null || brew install libxext
+  brew list nasm &>/dev/null || brew install nasm
 # Linux
 else
   # Allow :i386 architecture for 32-bit cross-compilation support
