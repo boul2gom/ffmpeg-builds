@@ -228,8 +228,6 @@ jobs:
         shell: bash
         run: |
           mkdir -p ~/Library/Caches/Homebrew
-          # Start refreshing the cache in the background
-          brew update &
 
       - name: 🗃️ Cache apt archives
         if: matrix.target-os == 'linux'
