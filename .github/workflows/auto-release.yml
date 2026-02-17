@@ -225,18 +225,31 @@ jobs:
       - name: 📦 Export to NuGet
         if: runner.os == 'Windows'
         run: |
-          ./vcpkg/vcpkg export ffmpeg --nuget --nuget-id=MyBuild.FFmpeg --nuget-version=${{ needs.check_updates.outputs.version }} --output=ffmpeg-nuget
+          ./vcpkg/vcpkg export ffmpeg --nuget --nuget-id=boul2gom.FFmpeg --nuget-version=${{ needs.check_updates.outputs.version }} --output=ffmpeg-nuget
 
       - name: 🚀 Publish to GitHub Packages
         if: runner.os == 'Windows'
         run: |
-          dotnet nuget add source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
-            --name "GitHubRepo" \
-            --username "${{ github.actor }}" \
-            --password "${{ secrets.GITHUB_TOKEN }}" \
+          $sourceUrl = "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
+          $sourceName = "GitHubRepo"
+          
+          dotnet nuget remove source $sourceName -ErrorAction SilentlyContinue
+          
+          dotnet nuget add source $sourceUrl `
+            --name $sourceName `
+            --username "${{ github.actor }}" `
+            --password "${{ secrets.GITHUB_TOKEN }}" `
             --store-password-in-clear-text
 
-          dotnet nuget push "*.nupkg" --source "GitHubRepo" --api-key github --skip-duplicate
+          $nupkgFile = Get-ChildItem -Path . -Filter "*.nupkg" | Select-Object -First 1
+          
+          if ($nupkgFile) {
+              Write-Host "Found package: $($nupkgFile.FullName)"
+              dotnet nuget push "$($nupkgFile.FullName)" --source $sourceName --api-key github --skip-duplicate
+          } else {
+              Write-Error "No .nupkg file found to publish!"
+              exit 1
+          }
 
       - name: 📤 Upload build logs
         uses: actions/upload-artifact@v6.0.0
