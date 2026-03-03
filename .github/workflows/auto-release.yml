@@ -338,6 +338,29 @@ jobs:
           app-id: ${{ secrets.CI_APP_ID }}
           private-key: ${{ secrets.CI_APP_KEY }}
 
+      - name: 📁 Check out the repository
+        uses: actions/checkout@v6.0.2
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: 🔐 Import GPG Key and setup Git
+        uses: crazy-max/ghaction-import-gpg@v7.0.0
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          trust_level: 5
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_tag_gpgsign: true
+          git_config_global: true
+          git_committer_name: "boul2gom-bot"
+          git_committer_email: "actions-bot@boul2gom.com"
+
+      - name: 🏷️ Create and push signed tag
+        run: |
+          git tag -s "v${{ needs.check_updates.outputs.version }}" -m "🔖 v${{ needs.check_updates.outputs.version }}"
+          git push origin "v${{ needs.check_updates.outputs.version }}"
+
       - name: 📅 Get current date
         id: date
         run: echo "date=$(date +'%Y-%m-%d %H::%M')" >> $GITHUB_ENV
@@ -384,8 +407,8 @@ jobs:
         uses: softprops/action-gh-release@v2.5.0
         with:
           token: ${{ steps.app-token.outputs.token }}
-          tag_name: ${{ needs.check_updates.outputs.version }}
-          name: 🔖 ${{ needs.check_updates.outputs.version }}
+          tag_name: v${{ needs.check_updates.outputs.version }}
+          name: 🔖 v${{ needs.check_updates.outputs.version }}
           draft: false
           prerelease: false
           files: release_assets/*
