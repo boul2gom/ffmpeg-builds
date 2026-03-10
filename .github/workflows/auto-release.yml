@@ -67,9 +67,9 @@ jobs:
                   owner: context.repo.owner,
                   repo: context.repo.repo
                 });
-                latest_release_version = releases.data.tag_name;
+                latest_release_version = releases.data.tag_name.replace(/^v/, '');
                 latest_release_date = releases.data.published_at;
-                console.log(`🏷️ Latest repo release: ${latest_release_version} (${latest_release_date})`);
+                console.log(`🏷️ Latest repo release: ${releases.data.tag_name} (${latest_release_date})`);
               } catch (e) {
                 console.log("⚠️ No releases found, assuming 0.0.0");
               }
@@ -98,6 +98,7 @@ jobs:
                   
                   changelog = "### 📜 Vcpkg Changes\n";
                   const commit_list = commits.data.slice(0, 20);
+                  console.log(`✅ Found ${commits.data.length} commits. Constructing changelog for top ${commit_list.length}:`);
                   
                   if (commit_list.length === 0) {
                      changelog += "No changes found in vcpkg ports/ffmpeg since last release.\n";
@@ -106,6 +107,7 @@ jobs:
                         const message = commit.commit.message.split('\n')[0];
                         const author = commit.commit.author.name;
                         const date = new Date(commit.commit.author.date).toISOString().split('T')[0];
+                        console.log(`  - [${date}] ${message} (${author})`);
                         changelog += `- ${date}: ${message} (${author})\n`;
                       }
                   }
