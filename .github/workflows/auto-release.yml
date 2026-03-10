@@ -2,7 +2,7 @@ name: Github CI - Automatic weekly release
 
 on:
   schedule:
-    - cron: '0 0 * * 1'
+    - cron: '0 0 * * 1,4'
   workflow_dispatch:
     inputs:
       force_release:
@@ -125,6 +125,89 @@ jobs:
             } catch (error) {
               core.setFailed(`Failed to check versions: ${error.message}`);
             }
+
+  keep_caches_alive:
+    needs: check_updates
+    if: ${{ needs.check_updates.outputs.has_updates != 'true' }}
+    name: 🛡️ Keep caches alive
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        target-os: [windows, linux, osx]
+        target-arch: [arm64, x86, x64]
+        include:
+          - target-os: windows
+            os: windows-latest
+          - target-os: linux
+            os: ubuntu-latest
+          - target-os: osx
+            os: macos-latest
+        exclude:
+          # macOS x86 is deprecated
+          - target-os: osx
+            target-arch: x86
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      VCPKG_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
+
+    steps:
+      - name: 📁 Checkout self
+        uses: actions/checkout@v6.0.2
+        with:
+          path: self/
+
+      - name: 📁 Checkout vcpkg
+        uses: actions/checkout@v6.0.2
+        with:
+          repository: microsoft/vcpkg
+          ref: master
+          path: vcpkg/
+          fetch-depth: 1
+
+      - name: 🗃️ Restore vcpkg executable cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            vcpkg/vcpkg
+            vcpkg/vcpkg.exe
+          key: ${{ matrix.target-os }}-vcpkg-exe-${{ hashFiles('vcpkg/.git/HEAD') }}
+
+      - name: 🗃️ Restore vcpkg downloads cache
+        uses: actions/cache/restore@v4
+        with:
+          path: vcpkg/downloads
+          key: ${{ matrix.target-os }}-${{ matrix.target-arch }}-vcpkg-downloads-${{ hashFiles('self/vcpkg.json') }}
+          restore-keys: |
+            ${{ matrix.target-os }}-${{ matrix.target-arch }}-vcpkg-downloads-
+
+      - name: 🗃️ Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VCPKG_BINARY_CACHE }}
+          key: ${{ matrix.target-os }}-${{ matrix.target-arch }}-vcpkg-binary-${{ hashFiles('self/vcpkg.json') }}
+          restore-keys: |
+            ${{ matrix.target-os }}-${{ matrix.target-arch }}-vcpkg-binary-
+
+      - name: 🗃️ Restore homebrew cache
+        if: matrix.target-os == 'osx'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: ${{ matrix.target-os }}-brew-${{ hashFiles('self/install-deps.sh') }}
+          restore-keys: |
+            ${{ matrix.target-os }}-brew-
+
+      - name: 🗃️ Restore apt cache
+        if: matrix.target-os == 'linux'
+        uses: actions/cache/restore@v4
+        with:
+          path: apt-cache
+          key: ${{ matrix.target-os }}-apt-${{ hashFiles('self/install-deps.sh') }}
+          restore-keys: |
+            ${{ matrix.target-os }}-apt-
 
   pack_binaries:
     needs: check_updates
