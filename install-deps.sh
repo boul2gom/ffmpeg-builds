@@ -4,6 +4,9 @@
 if [ "$(uname)" == "Darwin" ]; then
   brew update
 
+  # Uninstall Homebrew's pkg-config to force vcpkg to use its own isolated version
+  brew list pkg-config &>/dev/null && brew uninstall --ignore-dependencies pkg-config
+
   brew list autoconf &>/dev/null || brew install autoconf
   brew list autoconf-archive &>/dev/null || brew install autoconf-archive
   brew list automake &>/dev/null || brew install automake
